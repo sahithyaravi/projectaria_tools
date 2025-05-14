@@ -194,17 +194,18 @@ def plot_camera_trajectory(x, y, instance_ids, rgb_img, class_colors, instance_t
     # Bright green and red colors
     bright_green = '#00FF00'
     bright_red = '#FF3030'
-    offset_px = 20
+    bright_blue = '#0000FF'
+    offset_px = 0
 
     # Start marker
     x_start, y_start = camera_positions[0]
-    plt.scatter(x_start, y_start - offset_px, color=bright_green, s=200, marker='^', label='Start')
+    plt.scatter(x_start, y_start, color=bright_green, s=80, marker='^', label='Start')
     plt.text(x_start, y_start - offset_px - 15, 'Start', color=bright_green, fontsize=10, ha='center', weight='bold')
 
     # End marker
     x_end, y_end = camera_positions[-1]
-    plt.scatter(x_end, y_end + offset_px, color=bright_red, s=200, marker='X', label='End')
-    plt.text(x_end, y_end + offset_px + 15, 'End', color=bright_red, fontsize=10, ha='center', weight='bold')
+    plt.scatter(x_end, y_end, color=bright_blue, s=80, marker='X', label='End')
+    plt.text(x_end, y_end + offset_px - 15, 'End', color=bright_blue, fontsize=10, ha='center', weight='bold')
 
 
     plt.legend(loc='lower right')

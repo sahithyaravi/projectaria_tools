@@ -22,22 +22,22 @@ for scene_id in $scene_ids; do
 done
 
 
-# REPO_DIR="/data/refactored-carnival"
-# cd $REPO_DIR
+REPO_DIR="/data/refactored-carnival"
+cd $REPO_DIR
 
-# source ~/anaconda3/etc/profile.d/conda.sh
-# conda activate refactored-carnival
+source ~/anaconda3/etc/profile.d/conda.sh
+conda activate refactored-carnival
 
 
-# log="logs/run_gpt4o_3d_topdown.log"
-# out="output_3d/gpt4o/gpt4o_3d_topdown.csv"
-# bird_eye_folder=""
+log="logs/run_gpt4o_3d_topdown.log"
+out="output_3d/gpt4o/gpt4o_3d_topdown.csv"
+bird_eye_folder="/data/post_intern_sahithya/top_down_views_questions"
 
-# python main_gpt4o.py \
-#     --file_path ./spatial_reasoning_qa_val_natural.json \
-#     --save_path "$out" \
-#     --use_bird_eye_scene_view \
-#     --bird_eye_path $bird_eye_folder \
-#     --mark_bbox \
-#     --sample_size 600\
-#   2>&1 | tee logs/gpt4o_topdown.log
+python main_gpt4o.py \
+    --file_path ./spatial_reasoning_qa_val_natural.json \
+    --save_path "$out" \
+    --use_bird_eye_scene_view \
+    --bird_eye_path $bird_eye_folder \
+    --mark_bbox \
+    # --sample_size 600\
+  2>&1 | tee logs/gpt4o_topdown.log
