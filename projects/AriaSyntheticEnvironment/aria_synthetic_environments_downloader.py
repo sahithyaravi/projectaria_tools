@@ -24,7 +24,7 @@ from tqdm import tqdm
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
-SCENES_PER_CHUNK = 1
+SCENES_PER_CHUNK = 100
 
 
 # Copied from tqdm website/documentation - probably worth moving into a utils.py

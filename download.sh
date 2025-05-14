@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Read scene IDs from the Python list in scenes.txt
-scene_ids=$(python3 -c "import ast; print(' '.join(str(i) for i in ast.literal_eval(open('scenes.txt').read())))")
+scene_ids=$(python3 -c "import ast; print(' '.join(str(i) for i in ast.literal_eval(open('chunk_8.txt').read())))")
 
 # Other config variables
 SET="train"
