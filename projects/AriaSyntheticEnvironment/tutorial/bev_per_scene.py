@@ -10,8 +10,39 @@ import cv2
 import sys
 from projectaria_tools.core.sophus import SE3
 from tqdm import tqdm
+from collections import defaultdict
 
 # --------------------------- Helper Functions --------------------------- #
+def transform_3d_points(transform, points):
+    points_h = np.concatenate([points, np.ones((len(points), 1))], axis=1)
+    return (transform @ points_h.T).T[:, :-1]
+
+def rotate_se3_about_forward_axis(T_scene_camera, theta):
+    R_z = R.from_euler('z', theta).as_matrix()
+    R_scene_camera = T_scene_camera.rotation().to_matrix()
+    t_scene_camera = T_scene_camera.translation()
+
+    R_rotated = R_scene_camera @ R_z
+    T_rotated = np.eye(4)
+    T_rotated[:3, :3] = R_rotated
+    T_rotated[:3, 3] = t_scene_camera
+    return SE3.from_matrix(T_rotated)
+
+
+def camera_to_world(xyz_cam, frame_idx, trajectory, device):
+    # Step 1: Camera → Device
+    T_device_from_camera = device.get_transform_device_camera()
+    T_device_from_camera_rot = rotate_se3_about_forward_axis(T_device_from_camera, 3 * np.pi / 2)
+
+    xyz_cam_h = np.append(xyz_cam, 1.0)
+    xyz_device_rot_h = T_device_from_camera_rot.to_matrix() @ xyz_cam_h
+
+    # Step 2: Device → World
+    T_world_from_device = trajectory["Ts_world_from_device"][frame_idx]
+    xyz_world_h = T_world_from_device @ xyz_device_rot_h
+
+    return xyz_world_h[:3]
+
 def get_clipped_points(points_world, instance_ids, colors, rgb_values,
                        z_bounds=(0.1, 2.5), crop_percentiles=(1, 99)):
     """
@@ -43,22 +74,8 @@ def parse_args():
     parser.add_argument("--dataset_path", type=str, required=True, help="Path to ASE dataset root")
     parser.add_argument("--scene_id", type=int, required=True, help="Scene ID to process")
     parser.add_argument("--output_folder", type=Path, default="bird_eye_view", help="Output folder for results")
+    parser.add_argument("--qa_file_path", type=str, default="/Users/sahithyaravi/Documents/projectaria_tools/spatial_reasoning_qa_val_natural.json", help="Path to QA file")
     return parser.parse_args()
-
-def transform_3d_points(transform, points):
-    points_h = np.concatenate([points, np.ones((len(points), 1))], axis=1)
-    return (transform @ points_h.T).T[:, :-1]
-
-def rotate_se3_about_forward_axis(T_scene_camera, theta):
-    R_z = R.from_euler('z', theta).as_matrix()
-    R_scene_camera = T_scene_camera.rotation().to_matrix()
-    t_scene_camera = T_scene_camera.translation()
-
-    R_rotated = R_scene_camera @ R_z
-    T_rotated = np.eye(4)
-    T_rotated[:3, :3] = R_rotated
-    T_rotated[:3, 3] = t_scene_camera
-    return SE3.from_matrix(T_rotated)
 
 def render_topdown_from_projected(x, y, colors, bbox, grid_resolution=0.01):
     x_min, y_min, x_max, y_max = bbox
@@ -170,6 +187,27 @@ def plot_camera_trajectory(x, y, instance_ids, rgb_img, class_colors, instance_t
     plt.tight_layout()
     #plt.show()
 
+def mark_object(qmeta, rgb_img, trajectory, start_frame, end_frame, min_x, min_y, H, W):
+    object_a_xyz = qmeta["bbox_centers_camera_a_frame1"]
+    object_b_xyz = qmeta["bbox_centers_camera_b_frame2"]
+    # Convert object centers to world
+    object_a_world = camera_to_world(object_a_xyz, start_frame, trajectory, device)
+    object_b_world = camera_to_world(object_b_xyz, end_frame, trajectory, device)
+
+    # Convert bbox centers to top-down image space
+    def project_to_bev(xyz):
+        x_img = int((xyz[0] - min_x) / 0.01)
+        y_img = H - int((xyz[1] - min_y) / 0.01) - 1
+        return x_img, y_img
+
+    a_x, a_y = project_to_bev(object_a_world)
+    b_x, b_y = project_to_bev(object_b_world)
+
+    plt.figure(figsize=(10, 10))
+    plt.imshow(rgb_img.copy())
+    plt.scatter([a_x, b_x], [a_y, b_y], c=["lime", "orange"], s=150, marker='X', label="QA Objects")
+    plt.text(a_x, a_y - 5, "Object A", color="lime", fontsize=20, ha='center')
+    plt.text(b_x, b_y - 5, "Object B", color="orange", fontsize=20, ha='center')
 
 
 
@@ -179,6 +217,27 @@ def main():
     args = parse_args()
     scene_path = Path(args.dataset_path) / str(args.scene_id)
     print(f"Using dataset: {scene_path}")
+
+    # load qa json
+    with open(args.qa_file_path, "r") as f:
+        qa_data = json.load(f)
+    
+    # For each scene_id, get all "frame_ids" and  "bbox_centers_camera_a_frame1" and "bbox_centers_camera_b_frame2" and save it in a map
+    question_metadata_per_scene = defaultdict(list)
+    for entry in qa_data:
+        if entry["scene_id"] == str(args.scene_id):
+            frame_id = entry["frame_ids"]
+            bboxes_cam_a = entry["bbox_centers_camera_a_frame1"]
+            bboxes_cam_b = entry["bbox_centers_camera_b_frame2"]
+            meta_data = {
+                "frame_id": frame_id,
+                "bbox_centers_camera_a_frame1": bboxes_cam_a,
+                "bbox_centers_camera_b_frame2": bboxes_cam_b
+            }
+            question_metadata_per_scene[args.scene_id].append(meta_data)
+   
+
+    print(f"Number of questions in scene {args.scene_id}: {len(question_metadata_per_scene[args.scene_id])}")
 
     # Strip dataset root path until ariav5
     output_folder = args.output_folder
@@ -283,36 +342,38 @@ def main():
 
     plt.tight_layout()
     plt.savefig(f"{args.output_folder}/{args.scene_id}_overlay.png", dpi=300, bbox_inches='tight')
-    #plt.show()
 
-    plot_camera_trajectory(
-        x, y,
-        instance_ids_filtered,
-        rgb_img,
-        class_colors,
-        instance_to_class,
-        trajectory,
-        bbox,
-        grid_resolution=0.01,
-        H=H,
-        min_x=min_x,
-        min_y=min_y,
-    )
 
-    # plot_camera_trajectory(
-    # rgb_img=rgb_img,
-    # points_world=points_world,
-    # instance_ids=instance_ids,
-    # class_colors=class_colors,
-    # instance_to_class=instance_to_class,
-    # trajectory=trajectory,
-    # min_x=min_x,
-    # min_y=min_y,
-    # H=H,
-    # grid_resolution=0.01,
-    # scene_id=args.scene_id)
-    plt.savefig(f"{args.output_folder}/{args.scene_id}_traj.png", dpi=300, bbox_inches='tight')
+    # Per question traj plots
+    question_metadata = question_metadata_per_scene[args.scene_id]
 
+    for i, qmeta in enumerate(question_metadata):
+        question_frames = qmeta["frame_id"]
+        # Draw sub-trajectory just for frames in this question
+        start_frame = int(question_frames[0])
+        end_frame = int(question_frames[-1])  # assuming it's sorted
+        frames_range = list(range(start_frame, end_frame + 1))
+
+        traj_subset = {
+            "Ts_world_from_device": [trajectory["Ts_world_from_device"][f] for f in frames_range]
+        }
+        plot_camera_trajectory(
+            x, y,
+            instance_ids_filtered,
+            rgb_img,
+            class_colors,
+            instance_to_class,
+            traj_subset,
+            bbox,
+            grid_resolution=0.01,
+            H=H,
+            min_x=min_x,
+            min_y=min_y,
+        )
+
+        plt.title(f"Scene {args.scene_id} - Question {i}")
+        plt.savefig(f"{args.output_folder}/{args.scene_id}_{start_frame}_{end_frame}_bev.png", dpi=300, bbox_inches='tight')
+        plt.close()
 
 if __name__ == "__main__":
     # time taken to complete
