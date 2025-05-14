@@ -167,8 +167,9 @@ def plot_camera_trajectory(x, y, instance_ids, rgb_img, class_colors, instance_t
     for (cx, cy), class_name in zip(centroids, labels):
         plt.text(cx, cy, class_name, color='yellow', fontsize=8, ha='center', va='center', weight='bold')
 
-    # Orientation arrows
     arrow_scale = 20
+    camera_positions = []
+
     for T in trajectory["Ts_world_from_device"]:
         if hasattr(T, "rotation"):
             Rmat = T.rotation().to_matrix()
@@ -176,12 +177,35 @@ def plot_camera_trajectory(x, y, instance_ids, rgb_img, class_colors, instance_t
         else:
             Rmat = T[:3, :3]
             t = T[:3, 3]
+
         forward = Rmat[:, 2]
         x_img = int((t[0] - min_x) / grid_resolution)
         y_img = H - int((t[1] - min_y) / grid_resolution) - 1
         dx = arrow_scale * forward[0]
         dy = -arrow_scale * forward[1]
-        plt.arrow(x_img, y_img, dx, dy, color='magenta', head_width=8, head_length=10, length_includes_head=True, alpha=0.7)
+
+        plt.arrow(x_img, y_img, dx, dy, color='magenta', head_width=8, head_length=10,
+                length_includes_head=True, alpha=0.7)
+
+        camera_positions.append((x_img, y_img))
+
+
+    # Offset markers slightly from the path
+    # Bright green and red colors
+    bright_green = '#00FF00'
+    bright_red = '#FF3030'
+    offset_px = 20
+
+    # Start marker
+    x_start, y_start = camera_positions[0]
+    plt.scatter(x_start, y_start - offset_px, color=bright_green, s=200, marker='^', label='Start')
+    plt.text(x_start, y_start - offset_px - 15, 'Start', color=bright_green, fontsize=10, ha='center', weight='bold')
+
+    # End marker
+    x_end, y_end = camera_positions[-1]
+    plt.scatter(x_end, y_end + offset_px, color=bright_red, s=200, marker='X', label='End')
+    plt.text(x_end, y_end + offset_px + 15, 'End', color=bright_red, fontsize=10, ha='center', weight='bold')
+
 
     plt.legend(loc='lower right')
     plt.tight_layout()
