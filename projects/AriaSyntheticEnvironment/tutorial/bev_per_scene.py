@@ -12,6 +12,31 @@ from projectaria_tools.core.sophus import SE3
 from tqdm import tqdm
 
 # --------------------------- Helper Functions --------------------------- #
+def get_clipped_points(points_world, instance_ids, colors, rgb_values,
+                       z_bounds=(0.1, 2.5), crop_percentiles=(1, 99)):
+    """
+    Filters and crops 3D points and corresponding attributes.
+    Returns filtered x, y, instance_ids, colors, rgb_values, and bounding box.
+    """
+    x, y, z = points_world[:, 0], points_world[:, 1], points_world[:, 2]
+    valid_z = (z > z_bounds[0]) & (z < z_bounds[1])
+    x, y = x[valid_z], y[valid_z]
+    instance_ids = instance_ids[valid_z]
+    colors = colors[valid_z]
+    rgb_values = rgb_values[valid_z]
+
+    x_min, x_max = np.percentile(x, crop_percentiles)
+    y_min, y_max = np.percentile(y, crop_percentiles)
+    inside_bounds = (x >= x_min) & (x <= x_max) & (y >= y_min) & (y <= y_max)
+
+    x = x[inside_bounds]
+    y = y[inside_bounds]
+    instance_ids = instance_ids[inside_bounds]
+    colors = colors[inside_bounds]
+    rgb_values = rgb_values[inside_bounds]
+
+    return x, y, instance_ids, colors, rgb_values, (x_min, y_min, x_max, y_max)
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -35,20 +60,16 @@ def rotate_se3_about_forward_axis(T_scene_camera, theta):
     T_rotated[:3, 3] = t_scene_camera
     return SE3.from_matrix(T_rotated)
 
-def render_topdown_from_projected(points_world, colors, grid_resolution=0.01):
-    x, y, z = points_world[:, 0], points_world[:, 1], points_world[:, 2]
-    valid = (z > 0.1) & (z < 2.5)
-    x, y, colors = x[valid], y[valid], colors[valid]
-    min_x, min_y, max_x, max_y = x.min(), y.min(), x.max(), y.max()
-
-    W = int(np.ceil((max_x - min_x) / grid_resolution))
-    H = int(np.ceil((max_y - min_y) / grid_resolution))
-    xi = ((x - min_x) / grid_resolution).astype(int)
-    yi = ((y - min_y) / grid_resolution).astype(int)
+def render_topdown_from_projected(x, y, colors, bbox, grid_resolution=0.01):
+    x_min, y_min, x_max, y_max = bbox
+    W = int(np.ceil((x_max - x_min) / grid_resolution))
+    H = int(np.ceil((y_max - y_min) / grid_resolution))
+    xi = ((x - x_min) / grid_resolution).astype(int)
+    yi = ((y - y_min) / grid_resolution).astype(int)
 
     img = np.zeros((H, W, 3), dtype=np.uint8)
     img[H - yi - 1, xi] = colors
-    return img, (min_x, min_y, H, W)
+    return img, (x_min, y_min, H, W)
 
 def undistort_image(file_path, device, is_depth=False):
     from projectaria_tools.core import calibration
@@ -76,14 +97,13 @@ def convert_instance_to_color(instance_to_class):
         class_colors[name] = colors.hsv_to_rgb([hue, 0.8, 0.8])
     return class_colors
 
-def plot_camera_trajectory(rgb_img, points_world, instance_ids, class_colors, instance_to_class, trajectory, min_x, min_y, H, grid_resolution, scene_id):
-    instance_map = np.zeros((H, rgb_img.shape[1]), dtype=np.int32)
-    x, y, z = points_world[:, 0], points_world[:, 1], points_world[:, 2]
-    valid = (z > 0.1) & (z < 2.5)
-    x, y, ids = x[valid], y[valid], instance_ids[valid]
-    xi = ((x - min_x) / grid_resolution).astype(int)
-    yi = ((y - min_y) / grid_resolution).astype(int)
-    instance_map[H - yi - 1, xi] = ids
+def plot_camera_trajectory(x, y, instance_ids, rgb_img, class_colors, instance_to_class, trajectory, bbox, grid_resolution, H, min_x, min_y):
+    x_min, y_min, H, W = bbox[0], bbox[1], rgb_img.shape[0], rgb_img.shape[1]
+    xi = ((x - x_min) / grid_resolution).astype(int)
+    yi = ((y - y_min) / grid_resolution).astype(int)
+
+    instance_map = np.zeros((H, W), dtype=np.int32)
+    instance_map[H - yi - 1, xi] = instance_ids
 
     rgb_img_outline = rgb_img.copy()
     unique_ids = np.unique(instance_map)
@@ -238,9 +258,11 @@ def main():
     colors = np.concatenate(all_colors)
     instance_ids = np.concatenate(all_instances)
 
-    # Render RGB & Instance maps
-    rgb_img, meta = render_topdown_from_projected(points_world, rgb_values)
-    inst_img, _ = render_topdown_from_projected(points_world, colors)
+    x, y, instance_ids_filtered, colors_filtered, rgb_values_filtered, bbox = get_clipped_points(
+    points_world, instance_ids, colors, rgb_values)
+
+    rgb_img, meta = render_topdown_from_projected(x, y, rgb_values_filtered, bbox)
+    inst_img, _   = render_topdown_from_projected(x, y, colors_filtered, bbox)
     min_x, min_y, H, W = meta
 
     # Plot top-down maps
@@ -262,18 +284,33 @@ def main():
     plt.tight_layout()
     plt.savefig(f"{args.output_folder}/{args.scene_id}_overlay.png", dpi=300, bbox_inches='tight')
     #plt.show()
+
     plot_camera_trajectory(
-    rgb_img=rgb_img,
-    points_world=points_world,
-    instance_ids=instance_ids,
-    class_colors=class_colors,
-    instance_to_class=instance_to_class,
-    trajectory=trajectory,
-    min_x=min_x,
-    min_y=min_y,
-    H=H,
-    grid_resolution=0.01,
-    scene_id=args.scene_id)
+        x, y,
+        instance_ids_filtered,
+        rgb_img,
+        class_colors,
+        instance_to_class,
+        trajectory,
+        bbox,
+        grid_resolution=0.01,
+        H=H,
+        min_x=min_x,
+        min_y=min_y,
+    )
+
+    # plot_camera_trajectory(
+    # rgb_img=rgb_img,
+    # points_world=points_world,
+    # instance_ids=instance_ids,
+    # class_colors=class_colors,
+    # instance_to_class=instance_to_class,
+    # trajectory=trajectory,
+    # min_x=min_x,
+    # min_y=min_y,
+    # H=H,
+    # grid_resolution=0.01,
+    # scene_id=args.scene_id)
     plt.savefig(f"{args.output_folder}/{args.scene_id}_traj.png", dpi=300, bbox_inches='tight')
 
 
